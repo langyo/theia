@@ -284,7 +284,7 @@ export class PreferenceServiceImpl implements PreferenceService, FrontendApplica
 
     getPreferences(resourceUri?: string): { [key: string]: any } {
         const prefs: { [key: string]: any } = {};
-        Object.keys(this.schema.getCombinedSchema().properties).forEach(p => {
+        this.schema.getPreferenceNames().forEach(p => {
             prefs[p] = resourceUri ? this.get(p, undefined, resourceUri) : this.get(p, undefined);
         });
         return prefs;
@@ -303,8 +303,14 @@ export class PreferenceServiceImpl implements PreferenceService, FrontendApplica
                 const p = this.providersMap.get(s);
                 if (p && p.canProvide(preferenceName, resourceUri).priority >= 0) {
                     const value = p.get<T>(preferenceName, resourceUri);
-                    const ret = value !== null && value !== undefined ? value : defaultValue;
-                    return deepFreeze(ret);
+                    const result = value !== null && value !== undefined ? value : defaultValue;
+                    if (result === null || value === undefined) {
+                        const overriddenPreferenceName = this.schema.testOverridenPreferenceName(preferenceName);
+                        if (overriddenPreferenceName) {
+                            return this.get(overriddenPreferenceName, defaultValue, resourceUri!);
+                        }
+                    }
+                    return deepFreeze(result);
                 }
             }
         }
@@ -370,7 +376,7 @@ export class PreferenceServiceImpl implements PreferenceService, FrontendApplica
         workspaceValue: T | undefined, // Workspace Preference
         workspaceFolderValue: T | undefined // Folder Preference
     } | undefined {
-        const schemaProps = this.schema.getCombinedSchema().properties[preferenceName];
+        const schemaProps = this.schema.getPreferenceProperty(preferenceName);
         if (schemaProps) {
             const defaultValue = schemaProps.default;
             const userProvider = this.providersMap.get(PreferenceScope.User);

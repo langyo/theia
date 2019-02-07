@@ -18,6 +18,7 @@ import { inject, injectable } from 'inversify';
 import { MonacoToProtocolConverter, ProtocolToMonacoConverter } from 'monaco-languageclient';
 import URI from '@theia/core/lib/common/uri';
 import { ResourceProvider, ReferenceCollection, Event } from '@theia/core';
+import { PreferenceService, PreferenceChange } from '@theia/core/lib/browser';
 import { EditorPreferences, EditorPreferenceChange } from '@theia/editor/lib/browser';
 import { MonacoEditorModel } from './monaco-editor-model';
 
@@ -33,6 +34,9 @@ export class MonacoTextModelService implements monaco.editor.ITextModelService {
 
     @inject(EditorPreferences)
     protected readonly editorPreferences: EditorPreferences;
+
+    @inject(PreferenceService)
+    protected readonly preferences: PreferenceService;
 
     @inject(MonacoToProtocolConverter)
     protected readonly m2p: MonacoToProtocolConverter;
@@ -63,8 +67,8 @@ export class MonacoTextModelService implements monaco.editor.ITextModelService {
         const model = await (new MonacoEditorModel(resource, this.m2p, this.p2m).load());
         model.autoSave = this.editorPreferences.get('editor.autoSave', undefined, uriStr);
         model.autoSaveDelay = this.editorPreferences.get('editor.autoSaveDelay', undefined, uriStr);
-        model.textEditorModel.updateOptions(this.getModelOptions(uriStr));
-        const disposable = this.editorPreferences.onPreferenceChanged(change => this.updateModel(model, change));
+        model.textEditorModel.updateOptions(this.getModelOptions(model));
+        const disposable = this.preferences.onPreferenceChanged(change => this.updateModel(model, change));
         model.onDispose(() => disposable.dispose());
         return model;
     }
@@ -76,26 +80,36 @@ export class MonacoTextModelService implements monaco.editor.ITextModelService {
             'editor.insertSpaces': 'insertSpaces'
         };
 
-    protected updateModel(model: MonacoEditorModel, change: EditorPreferenceChange): void {
+    protected updateModel(model: MonacoEditorModel, change: EditorPreferenceChange | PreferenceChange): void {
         if (change.preferenceName === 'editor.autoSave') {
             model.autoSave = this.editorPreferences.get('editor.autoSave', undefined, model.uri);
         }
         if (change.preferenceName === 'editor.autoSaveDelay') {
             model.autoSaveDelay = this.editorPreferences.get('editor.autoSaveDelay', undefined, model.uri);
         }
-        const modelOption = this.modelOptions[change.preferenceName];
-        if (modelOption) {
-            const options: monaco.editor.ITextModelUpdateOptions = {};
-            // tslint:disable-next-line:no-any
-            options[modelOption] = change.newValue as any;
-            model.textEditorModel.updateOptions(options);
+        const language = model.languageId;
+        for (const preferenceName in this.modelOptions) {
+            if (change.preferenceName === `[${language}].${preferenceName}` && change.affects(model.uri)) {
+                model.textEditorModel.updateOptions({
+                    [this.modelOptions[preferenceName]!]: change.newValue
+                });
+            }
         }
     }
 
-    protected getModelOptions(uri: string): monaco.editor.ITextModelUpdateOptions {
+    /** @deprecated pass MonacoEditorModel instead */
+    protected getModelOptions(uri: string): monaco.editor.ITextModelUpdateOptions;
+    protected getModelOptions(model: MonacoEditorModel): monaco.editor.ITextModelUpdateOptions;
+    protected getModelOptions(arg: string | MonacoEditorModel): monaco.editor.ITextModelUpdateOptions {
+        if (typeof arg === 'string') {
+            return {
+                tabSize: this.editorPreferences.get('editor.tabSize', undefined, arg),
+                insertSpaces: this.editorPreferences.get('editor.insertSpaces', undefined, arg)
+            };
+        }
         return {
-            tabSize: this.editorPreferences.get('editor.tabSize', undefined, uri),
-            insertSpaces: this.editorPreferences.get('editor.insertSpaces', undefined, uri)
+            tabSize: this.preferences.get(`[${arg.languageId}].editor.tabSize`, undefined, arg.uri),
+            insertSpaces: this.preferences.get(`[${arg.languageId}].editor.insertSpaces`, undefined, arg.uri)
         };
     }
 
